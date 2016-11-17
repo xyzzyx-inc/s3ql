@@ -1208,12 +1208,13 @@ def main(args=None):
               you have deleted since then MAY REAPPEAR WITH SOME OF THEIR CONTENT LOST.
               ''')))
 
-        print('Enter "continue, I know what I am doing" to use the outdated data anyway:',
-              '> ', sep='\n', end='')
-        if options.batch:
-            raise QuietError('(in batch mode, exiting)', exitcode=41)
-        if sys.stdin.readline().strip() != 'continue, I know what I am doing':
-            raise QuietError(exitcode=42)
+        if not options.batch or not options.force:
+            print('Enter "continue, I know what I am doing" to use the outdated data anyway:',
+                  '> ', sep='\n', end='')
+            if options.batch:
+                raise QuietError('(in batch mode, exiting)', exitcode=41)
+            if sys.stdin.readline().strip() != 'continue, I know what I am doing':
+                raise QuietError(exitcode=42)
 
         param['seq_no'] = seq_no
         param['needs_fsck'] = True
