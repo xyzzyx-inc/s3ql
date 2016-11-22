@@ -12,7 +12,12 @@ from .s3c import get_S3Error
 from .common import NoSuchObject, retry
 from ..inherit_docstrings import copy_ancestor_docstring
 from xml.sax.saxutils import escape as xml_escape
+from datetime import datetime, timedelta
 import re
+import urllib.request
+import json
+
+METADATA_SECURITY_CREDENTIALS_URL = 'http://169.254.169.254/latest/meta-data/iam/security-credentials/'
 
 log = logging.getLogger(__name__)
 
@@ -34,8 +39,11 @@ class Backend(s3c.Backend):
 
     known_options = ((s3c.Backend.known_options | { 'sse', 'rrs', 'ia' })
                      - {'dumb-copy', 'disable-expect100'})
+    needs_login = False
 
     def __init__(self, storage_url, login, password, options):
+        if not login and not password:
+            self.credential = Credential()
         super().__init__(storage_url, login, password, options)
 
     @staticmethod
@@ -71,6 +79,16 @@ class Backend(s3c.Backend):
 
     def __str__(self):
         return 'Amazon S3 bucket %s, prefix %s' % (self.bucket_name, self.prefix)
+
+    def _authorize_request(self, method, path, headers, subres):
+        if getattr(self, 'credential', None):
+            if self.credential.expired():
+                self.credential.refresh()
+            self.login = self.credential.access_key_id
+            self.password = self.credential.secret_access_key
+            headers[self.hdr_prefix + 'security-token'] = self.credential.token
+        super()._authorize_request(method, path, headers, subres)
+
 
     @copy_ancestor_docstring
     def delete_multi(self, keys, force=False):
@@ -161,3 +179,39 @@ class Backend(s3c.Backend):
 
         except:
             self.conn.discard()
+
+
+class Credential(object):
+    '''
+    An EC2 credential object.
+    '''
+
+    def __init__(self):
+        self.access_key_id = None
+        self.secret_access_key = None
+        self.token = None
+        self.expiration = None
+
+    def refresh(self):
+        data = self._get_credential()
+        self.access_key_id = data['AccessKeyId']
+        self.secret_access_key = data['SecretAccessKey']
+        self.token = data['Token']
+        self.expiration = datetime.strptime(data['Expiration'], '%Y-%m-%dT%H:%M:%SZ')
+        # in order to pre-fetch before expiring
+        self.expiration -= timedelta(minutes=5)
+
+    def expired(self):
+        return not self.expiration or self.expiration < datetime.now()
+
+    @staticmethod
+    def _get_credential():
+        try:
+            with urllib.request.urlopen(METADATA_SECURITY_CREDENTIALS_URL) as resp:
+                role = resp.read().decode('utf-8').strip()
+            with urllib.request.urlopen('%s%s' % (METADATA_SECURITY_CREDENTIALS_URL, role)) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+            return data
+        except:
+            log.error('Unable to get credentials from instance metadata')
+            raise
