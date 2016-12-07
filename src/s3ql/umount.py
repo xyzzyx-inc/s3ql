@@ -91,10 +91,10 @@ def get_cmdline(pid):
     '''
 
     try:
-        output = subprocess.check_output(['ps', '-p', str(pid), '-o', 'args='],
-                                         universal_newlines=True).strip()
-    except subprocess.CalledProcessError:
-        log.warning('Unable to execute ps, assuming process %d has terminated.'
+        with open('/proc/%d/cmdline' % pid) as fh:
+            output = fh.read().strip().replace('\0', ' ')
+    except:
+        log.warning('Could not read cmdline, assuming process %d has terminated.'
                     % pid)
         return None
 
